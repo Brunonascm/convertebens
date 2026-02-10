@@ -5,8 +5,8 @@ import io
 
 # --- Configuração da Página ---
 st.set_page_config(
-    page_title="Conversor Oficial IOB > Domínio",
-    page_icon="🏢",
+    page_title="Super Conversor Universal > Domínio",
+    page_icon="🚀",
     layout="wide"
 )
 
@@ -29,7 +29,7 @@ CONTAS_DOMINIO = {
 
 def sugerir_conta_dominio(descricao_origem):
     """
-    Tenta identificar o código da conta Domínio com base no nome da conta IOB.
+    Tenta identificar o código da conta Domínio com base no nome da conta de origem.
     """
     if not descricao_origem: return "" 
     desc = descricao_origem.upper()
@@ -76,7 +76,7 @@ def format_date_dominio(date_str):
     if not date_str: return ""
     return date_str.strip()
 
-# --- Parser do Sistema IOB ---
+# --- Parsers dos Sistemas ---
 
 def parse_iob(file_content):
     lines = file_content.split('\n')
@@ -289,10 +289,10 @@ def generate_dominio_txt(df, configs, de_para_contas):
 
 # --- Interface Gráfica Streamlit ---
 
-st.sidebar.header("⚙️ Configurações Gerais")
+st.sidebar.header("⚙️ Central de Configuração")
 
 # Seleção de Sistema (Preparado para expansão futura)
-sistema = st.sidebar.selectbox("Sistema de Origem", ["IOB"])
+sistema = st.sidebar.selectbox("Selecione o Sistema de Origem", ["IOB"])
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Parâmetros Domínio")
@@ -307,17 +307,21 @@ configs = {
 }
 
 # Tabela de Ajuda
-with st.sidebar.expander("📋 Ver Códigos Contábeis Domínio"):
+with st.sidebar.expander("📋 Tabela de Contas Domínio"):
     st.table(pd.DataFrame.from_dict(CONTAS_DOMINIO, orient='index', columns=['Descrição']))
 
-# Corpo Principal
-st.title("🔄 Conversor Oficial - IOB para Domínio")
-st.markdown(f"Ferramenta oficial para migração de bens do Ativo Imobilizado. Módulo atual: **{sistema}**.")
+# Corpo Principal - Textos ajustados para o conceito "SUPER CONVERSOR"
+st.title("🚀 SUPER CONVERSOR UNIVERSAL")
+st.markdown(f"""
+### Importação de Ativo Imobilizado: **Concorrentes > Domínio Sistemas**
+Ferramenta centralizada para conversão de bases de dados de diversos sistemas legados.
+Módulo ativo: **{sistema}**.
+""")
 
 if 'df_bens' not in st.session_state: 
     st.session_state.df_bens = pd.DataFrame()
 
-uploaded_file = st.file_uploader("Carregue o arquivo de Relatório (.txt)", type=["txt"])
+uploaded_file = st.file_uploader("Carregue o arquivo de exportação (.txt)", type=["txt"])
 
 if uploaded_file:
     # Processamento do Arquivo
@@ -327,7 +331,7 @@ if uploaded_file:
         except: 
             content = uploaded_file.getvalue().decode("utf-8")
             
-        with st.spinner("Processando arquivo oficial..."):
+        with st.spinner(f"Processando arquivo layout {sistema}..."):
             if sistema == "IOB": 
                 st.session_state.df_bens = parse_iob(content)
 
@@ -342,6 +346,7 @@ if not st.session_state.df_bens.empty:
     
     st.markdown("---")
     st.subheader("🤖 De-Para Inteligente de Contas")
+    st.info("O sistema sugere automaticamente as contas com base na descrição. Valide ou ajuste conforme necessário.")
     
     contas_origem_unicas = sorted(list(df['conta_origem_desc'].unique()))
     de_para_map = {}
@@ -373,7 +378,7 @@ if not st.session_state.df_bens.empty:
     if st.button("🚀 Gerar Arquivo de Importação", type="primary"):
         txt_output = generate_dominio_txt(df, configs, de_para_map)
         
-        st.success("Arquivo gerado com sucesso! Pronto para importar na Domínio.")
+        st.success("Arquivo gerado com sucesso! Pronto para importar no Módulo Patrimônio.")
         st.download_button(
             label="📥 Baixar TXT (Registro 0450)", 
             data=txt_output, 
