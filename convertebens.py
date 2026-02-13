@@ -6,7 +6,7 @@ import csv
 
 # --- Configuração da Página ---
 st.set_page_config(
-    page_title="Super Conversor Universal > Domínio",
+    page_title="Super Conversor Patrimônio > Domínio",
     page_icon="🚀",
     layout="wide"
 )
@@ -384,7 +384,7 @@ configs = {'centro_custo_padrao': centro_custo, 'conta_contabil_padrao': conta_p
 with st.sidebar.expander("📋 Tabela de Contas Domínio"):
     st.table(pd.DataFrame.from_dict(CONTAS_DOMINIO, orient='index', columns=['Descrição']))
 
-st.title("🚀 SUPER CONVERSOR UNIVERSAL")
+st.title("🚀 SUPER CONVERSOR DOMÍNIO PATRIMÔNIO")
 st.markdown(f"Importação de Ativo Imobilizado: **{sistema} > Domínio**")
 
 # Exibe Manual (Texto Puro)
@@ -447,4 +447,5 @@ if not st.session_state.df_bens.empty:
 
 if st.sidebar.button("Limpar / Novo Arquivo"):
     st.session_state.df_bens = pd.DataFrame()
+
     st.rerun()
