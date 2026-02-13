@@ -6,12 +6,50 @@ import csv
 
 # --- Configuração da Página ---
 st.set_page_config(
-    page_title="Super Conversor Patrimônio > Domínio",
+    page_title="Super Conversor Universal > Domínio",
     page_icon="🚀",
     layout="wide"
 )
 
-# --- Constantes e Inteligência de Contas ---
+# ==========================================
+# 📘 MANUAIS E INSTRUÇÕES (TEXTO)
+# ==========================================
+
+MANUAIS = { 
+    "IOB": {
+        "titulo": "Como exportar o arquivo no IOB",
+        "passos": [
+            "1. Acesse o módulo **Office Contábil**.",
+            "2. Vá no menu **Relatórios > Diversos**.",
+            "3. Selecione o modelo **Relação Completa dos Bens**.",
+            "4. Marque as opções **imprimir bens baixados** e **ordenar pelo código**.",
+            "5. Salve o arquivo em .TXT e faça o upload aqui."
+        ]
+    },
+    "Prosoft (Excel/CSV)": {
+        "titulo": "Como exportar no Prosoft",
+        "passos": [
+            "1. Acesse o menu **Contábil > Ativo Fixo > Processamentos > Relatórios > Movimentações**.",
+            "2. Informe o código da empresa.",
+            "3. Acesse a opção **Depreciações**.",
+            "4. Marque as opções **Mostrar valores na tela**, **Imprimir bens sem valores de depreciação**, **imprimir valores p/ bens totalmente depreciados** e **Imprimir valores p/bens mantidos para venda**.",
+            "5. Clique em **Processar** e salve em EXCEL. Se o Excel abrir com aviso de erro, clique em 'Sim', vá em **Salvar Como** e escolha **Pasta de Trabalho do Excel (.xlsx)**."
+        ]
+    }
+}
+
+def exibir_manual(sistema_selecionado):
+    """Renderiza o manual em texto na tela principal."""
+    manual = MANUAIS.get(sistema_selecionado)
+    if manual:
+        with st.expander(f"📚 Instruções: {manual['titulo']}", expanded=False):
+            for passo in manual['passos']:
+                st.markdown(passo)
+            st.info("💡 Dica: Se o arquivo der erro, verifique se não há quebras de linha nas descrições.")
+
+# ==========================================
+# 🧠 INTELIGÊNCIA CONTÁBIL
+# ==========================================
 
 CONTAS_DOMINIO = {
     "1": "VEICULOS",
@@ -247,13 +285,9 @@ def generate_dominio_txt(df, configs, de_para_contas):
         
         campos[2] = re.sub(r'[^a-zA-Z0-9-]', '', str(row.get('codigo', '')))[:15]
         
-        # --- BLINDAGEM DE DESCRIÇÃO CORRIGIDA ---
         desc_limpa = str(row.get('descricao', ''))
-        # 1. Remove _x000D_ (Artifact do Excel Alt+Enter)
         desc_limpa = desc_limpa.replace("_x000D_", " ")
-        # 2. Remove Quebras de Linha e Pipes
         desc_limpa = desc_limpa.replace("|", "-").replace("\n", " ").replace("\r", "")
-        # 3. Remove espaços duplos criados pela limpeza
         desc_limpa = re.sub(' +', ' ', desc_limpa).strip()
         
         campos[3] = desc_limpa[:250]
@@ -350,8 +384,11 @@ configs = {'centro_custo_padrao': centro_custo, 'conta_contabil_padrao': conta_p
 with st.sidebar.expander("📋 Tabela de Contas Domínio"):
     st.table(pd.DataFrame.from_dict(CONTAS_DOMINIO, orient='index', columns=['Descrição']))
 
-st.title("🚀 SUPER CONVERSOR DOMÍNIO PATRIMÔNIO")
+st.title("🚀 SUPER CONVERSOR UNIVERSAL")
 st.markdown(f"Importação de Ativo Imobilizado: **{sistema} > Domínio**")
+
+# Exibe Manual (Texto Puro)
+exibir_manual(sistema)
 
 if 'df_bens' not in st.session_state: st.session_state.df_bens = pd.DataFrame()
 
