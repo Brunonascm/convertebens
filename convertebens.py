@@ -36,7 +36,7 @@ MANUAIS = {
             "5. Clique em **Processar** e salve em EXCEL. Se o Excel abrir com aviso de erro, clique em 'Sim', vá em **Salvar Como** e escolha **Pasta de Trabalho do Excel (.xlsx)**."
         ]
     },
-"Contmatic (Excel/CSV)": {
+    "Contmatic (Excel/CSV)": {
         "titulo": "Como exportar no Contmatic (Phoenix)",
         "passos": [
             "1. Acesse o menu **Ativo Imobilizado**.",
@@ -44,6 +44,16 @@ MANUAIS = {
             "3. Informe o Período desejado.",
             "4. No quadro Imprimir, marque a opção **Todos** e selecione **Planilha xlsx**.",
             "5. Clique em **Imprimir**, salve o arquivo gerado e faça o upload aqui."
+        ]
+    },
+    "Planilha Simplificada / Copiar e Colar": {
+        "titulo": "Como usar a Planilha Simplificada",
+        "passos": [
+            "1. Baixe nosso modelo limpo clicando no botão de download.",
+            "2. Preencha as colunas com os dados dos bens no seu Excel.",
+            "3. Você tem duas opções para enviar os dados:",
+            "   - **Opção A:** Fazer o upload do arquivo Excel salvo.",
+            "   - **Opção B:** Copiar as linhas do seu Excel e colar (Ctrl+V) na tabela interativa da tela."
         ]
     }
 }
@@ -387,6 +397,48 @@ def parse_contmatic_universal(uploaded_file):
             
     return pd.DataFrame(bens)
 
+def parse_planilha_simplificada(df_input):
+    """Processa a planilha padrão gerada pela própria ferramenta."""
+    bens = []
+    codigos_vistos = {}
+    
+    for _, row in df_input.iterrows():
+        cod = str(row.get('Código', '')).strip()
+        if not cod or cod.upper() == "NAN" or cod == "NONE": continue
+            
+        try:
+            raw_cod = cod.replace('-', '').replace('/', '')
+            
+            if raw_cod in codigos_vistos:
+                codigos_vistos[raw_cod] += 1
+                final_cod = f"{raw_cod}-{codigos_vistos[raw_cod]}"
+            else:
+                codigos_vistos[raw_cod] = 0
+                final_cod = raw_cod
+
+            def safe_str(val, default=""):
+                v = str(val).strip()
+                return default if (v.upper() == "NAN" or v.upper() == "NONE" or v == "") else v
+
+            bem = {
+                "codigo": final_cod,
+                "descricao": safe_str(row.get('Descrição', '')),
+                "data_aquisicao": safe_str(row.get('Data Aquisição', '')),
+                "valor_original": safe_str(row.get('Valor Original', '0,00'), "0,00"),
+                "inicio_depreciacao": "", 
+                "taxa": "0,00", # Deixa zerado para o Domínio puxar da Conta Contábil
+                "nota_fiscal": "", # Removido da planilha
+                "depreciacao_acumulada": safe_str(row.get('Depreciação Acumulada', '0,00'), "0,00"),
+                "baixado": False,
+                "conta_origem_desc": safe_str(row.get('Grupo ou Conta', 'GERAL'), "GERAL"),
+                "duplicado": True if raw_cod != final_cod else False
+            }
+            bens.append(bem)
+        except Exception as e:
+            continue
+            
+    return pd.DataFrame(bens)
+
 # --- Gerador Domínio ---
 
 def generate_dominio_txt(df, configs, de_para_contas):
@@ -484,7 +536,7 @@ def generate_dominio_txt(df, configs, de_para_contas):
 # --- Interface Gráfica ---
 
 st.sidebar.header("⚙️ Central de Configuração")
-sistema = st.sidebar.selectbox("Selecione o Sistema de Origem", ["IOB / Folhamatic", "Prosoft (Excel/CSV)", "Contmatic (Excel/CSV)"])
+sistema = st.sidebar.selectbox("Selecione o Sistema de Origem", ["IOB / Folhamatic", "Prosoft (Excel/CSV)", "Contmatic (Excel/CSV)", "Planilha Simplificada / Copiar e Colar"])
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Parâmetros Domínio")
@@ -505,27 +557,79 @@ exibir_manual(sistema)
 
 if 'df_bens' not in st.session_state: st.session_state.df_bens = pd.DataFrame()
 
-if sistema == "IOB / Folhamatic":
-    file_types = ["txt"]
-else:
-    file_types = ["csv", "xlsx", "xls"]
+# --- FLUXO DA PLANILHA SIMPLIFICADA ---
+if sistema == "Planilha Simplificada / Copiar e Colar":
+    colunas_padrao = ["Código", "Descrição", "Data Aquisição", "Valor Original", "Depreciação Acumulada", "Grupo ou Conta"]
     
-uploaded_file = st.file_uploader("Carregue o arquivo", type=file_types)
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### 📥 Passo 1: Baixar Modelo Vazio")
+        df_vazio = pd.DataFrame(columns=colunas_padrao)
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            df_vazio.to_excel(writer, index=False, sheet_name='Bens')
+        
+        st.download_button(
+            label="Baixar Planilha Modelo (.xlsx)",
+            data=buffer.getvalue(),
+            file_name="modelo_bens_simplificado.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="secondary"
+        )
+        
+    with col2:
+        st.markdown("### 📤 Passo 2: Upload (Opção A)")
+        uploaded_planilha = st.file_uploader("Suba a planilha preenchida", type=["xlsx", "xls"], label_visibility="collapsed")
+        
+        if uploaded_planilha:
+            if st.session_state.df_bens.empty:
+                with st.spinner("Processando planilha anexada..."):
+                    try:
+                        df_upload = pd.read_excel(uploaded_planilha)
+                        st.session_state.df_bens = parse_planilha_simplificada(df_upload)
+                    except Exception as e:
+                        st.error(f"Erro ao ler planilha: {e}")
 
-if uploaded_file:
-    if st.session_state.df_bens.empty:
-        with st.spinner(f"Processando layout {sistema}..."):
-            try:
-                if sistema == "IOB / Folhamatic":
-                    content = uploaded_file.getvalue().decode("latin-1")
-                    st.session_state.df_bens = parse_iob(content)
-                elif sistema == "Prosoft (Excel/CSV)":
-                    st.session_state.df_bens = parse_prosoft_universal(uploaded_file)
-                elif sistema == "Contmatic (Excel/CSV)":
-                    st.session_state.df_bens = parse_contmatic_universal(uploaded_file)
-            except Exception as e:
-                st.error(f"Erro ao ler arquivo: {e}")
+    st.markdown("---")
+    st.markdown("### 📝 Passo 2: Copiar e Colar (Opção B)")
+    st.caption("Prefere não subir o arquivo? Copie as linhas do Excel e dê um Ctrl+V diretamente na tabela abaixo.")
+    
+    if 'edited_df' not in st.session_state:
+        df_inicial = pd.DataFrame(columns=colunas_padrao, index=range(5))
+        st.session_state.edited_df = df_inicial
+        
+    edited_data = st.data_editor(st.session_state.edited_df, num_rows="dynamic", width="stretch")
+    
+    if st.button("🚀 Processar Dados da Tabela", type="primary"):
+        with st.spinner("Processando dados colados..."):
+            st.session_state.df_bens = parse_planilha_simplificada(edited_data)
+        st.rerun()
 
+# --- FLUXO DOS SISTEMAS PADRÃO ---
+else:
+    if sistema == "IOB / Folhamatic":
+        file_types = ["txt"]
+    else:
+        file_types = ["csv", "xlsx", "xls"]
+        
+    uploaded_file = st.file_uploader("Carregue o arquivo", type=file_types)
+
+    if uploaded_file:
+        if st.session_state.df_bens.empty:
+            with st.spinner(f"Processando layout {sistema}..."):
+                try:
+                    if sistema == "IOB / Folhamatic":
+                        content = uploaded_file.getvalue().decode("latin-1")
+                        st.session_state.df_bens = parse_iob(content)
+                    elif sistema == "Prosoft (Excel/CSV)":
+                        st.session_state.df_bens = parse_prosoft_universal(uploaded_file)
+                    elif sistema == "Contmatic (Excel/CSV)":
+                        st.session_state.df_bens = parse_contmatic_universal(uploaded_file)
+                except Exception as e:
+                    st.error(f"Erro ao ler arquivo: {e}")
+
+# --- TELA DE RESULTADOS E EXPORTAÇÃO (Comum a todos) ---
 if not st.session_state.df_bens.empty:
     df = st.session_state.df_bens
     col1, col2, col3 = st.columns(3)
@@ -561,7 +665,6 @@ if not st.session_state.df_bens.empty:
         st.success("Arquivo gerado com sucesso!")
         st.download_button(label="📥 Baixar TXT (Registro 0450)", data=txt_output, file_name="importacao_bens_dominio.txt", mime="text/plain")
         
-        # --- NOVO AVISO DE IMPORTAÇÃO ---
         st.info(
             "**Passo a passo para importar na Domínio:**\n\n"
             "No módulo **CONTABILIDADE**, acesse o menu **UTILITÁRIOS > IMPORTAÇÃO > IMPORTAÇÃO PADRÃO > LEIAUTE DOMÍNIO SISTEMAS COM SEPARADOR**."
@@ -572,4 +675,6 @@ if not st.session_state.df_bens.empty:
 
 if st.sidebar.button("Limpar / Novo Arquivo"):
     st.session_state.df_bens = pd.DataFrame()
+    if 'edited_df' in st.session_state:
+        del st.session_state['edited_df']
     st.rerun()
