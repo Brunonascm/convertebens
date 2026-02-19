@@ -16,10 +16,10 @@ st.set_page_config(
 # ==========================================
 
 MANUAIS = { 
-    "IOB": {
-        "titulo": "Como exportar o arquivo no IOB",
+    "IOB / Folhamatic": {
+        "titulo": "Como exportar o arquivo no IOB / Folhamatic",
         "passos": [
-            "1. Acesse o módulo **Office Contábil**.",
+            "1. Acesse o módulo **Office Contábil** (ou Ativo Fixo).",
             "2. Vá no menu **Relatórios > Diversos**.",
             "3. Selecione o modelo **Relação Completa dos Bens**.",
             "4. Marque as opções **imprimir bens baixados** e **ordenar pelo código**.",
@@ -483,7 +483,7 @@ def generate_dominio_txt(df, configs, de_para_contas):
 # --- Interface Gráfica ---
 
 st.sidebar.header("⚙️ Central de Configuração")
-sistema = st.sidebar.selectbox("Selecione o Sistema de Origem", ["IOB", "Prosoft (Excel/CSV)", "Contmatic (Excel/CSV)"])
+sistema = st.sidebar.selectbox("Selecione o Sistema de Origem", ["IOB / Folhamatic", "Prosoft (Excel/CSV)", "Contmatic (Excel/CSV)"])
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Parâmetros Domínio")
@@ -504,14 +504,18 @@ exibir_manual(sistema)
 
 if 'df_bens' not in st.session_state: st.session_state.df_bens = pd.DataFrame()
 
-file_types = ["txt"] if sistema == "IOB" else ["csv", "xlsx", "xls"]
+if sistema == "IOB / Folhamatic":
+    file_types = ["txt"]
+else:
+    file_types = ["csv", "xlsx", "xls"]
+    
 uploaded_file = st.file_uploader("Carregue o arquivo", type=file_types)
 
 if uploaded_file:
     if st.session_state.df_bens.empty:
         with st.spinner(f"Processando layout {sistema}..."):
             try:
-                if sistema == "IOB":
+                if sistema == "IOB / Folhamatic":
                     content = uploaded_file.getvalue().decode("latin-1")
                     st.session_state.df_bens = parse_iob(content)
                 elif sistema == "Prosoft (Excel/CSV)":
