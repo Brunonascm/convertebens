@@ -20,27 +20,27 @@ MANUAIS = {
         "titulo": "Como exportar o arquivo no IOB",
         "passos": [
             "1. Acesse o módulo **Office Contábil**.",
-            "2. Vá no menu **Relatórios > Diversos**",
+            "2. Vá no menu **Relatórios > Diversos**.",
             "3. Selecione o modelo **Relação Completa dos Bens**.",
-            "4. Marque as opções **imprimir bens baixados** e **ordenar pelo código**",
+            "4. Marque as opções **imprimir bens baixados** e **ordenar pelo código**.",
             "5. Salve o arquivo em .TXT e faça o upload aqui."
         ]
     },
     "Prosoft (Excel/CSV)": {
         "titulo": "Como exportar no Prosoft",
         "passos": [
-            "1. Acesse o menu **Contábil > Ativo Fixo > Processamentos > Relatórios > Movimentações**",
-            "2. Informe o código da empresa",
-            "3. Acesse a opção **Depreciações**",
+            "1. Acesse o menu **Contábil > Ativo Fixo > Processamentos > Relatórios > Movimentações**.",
+            "2. Informe o código da empresa.",
+            "3. Acesse a opção **Depreciações**.",
             "4. Marque as opções **Mostrar valores na tela**, **Imprimir bens sem valores de depreciação**, **imprimir valores p/ bens totalmente depreciados** e **Imprimir valores p/bens mantidos para venda**.",
-            "5. Clique em **Processar** e salve em EXCEL, se o Excel abrir com aviso de erro, clique em 'Sim', vá em **Salvar Como** e escolha **Pasta de Trabalho do Excel (.xlsx)**."
+            "5. Clique em **Processar** e salve em EXCEL. Se o Excel abrir com aviso de erro, clique em 'Sim', vá em **Salvar Como** e escolha **Pasta de Trabalho do Excel (.xlsx)**."
         ]
     },
     "Contmatic (Excel/CSV)": {
         "titulo": "Como exportar no Contmatic (Phoenix)",
         "passos": [
             "1. Acesse o módulo **Ativo Fixo**.",
-            "2. Vá em **Relatórios > Cadastrais > Cadastro de Bens** (ou similar).",
+            "2. Vá em **Relatórios > Cadastrais > Cadastro de Bens**.",
             "3. Exporte a listagem completa na opção **Exportar para Excel**.",
             "4. Salve o arquivo gerado e faça o upload aqui na ferramenta."
         ]
@@ -298,7 +298,6 @@ def parse_contmatic_universal(uploaded_file):
         try: stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
         except: stringio = io.StringIO(uploaded_file.getvalue().decode("latin-1"))
         
-        # O Contmatic pode variar o separador no CSV
         try:
             sniffer = csv.Sniffer()
             sample = stringio.read(2048)
@@ -307,7 +306,7 @@ def parse_contmatic_universal(uploaded_file):
             reader = csv.reader(stringio, dialect)
         except:
             stringio.seek(0)
-            reader = csv.reader(stringio, delimiter=',') # Fallback para vírgula
+            reader = csv.reader(stringio, delimiter=',') 
             
         rows = list(reader)
 
@@ -320,7 +319,6 @@ def parse_contmatic_universal(uploaded_file):
         if not row: continue
         row_str = " ".join(str(x) for x in row).upper()
         
-        # Mapeamento Dinâmico das Colunas (Lê o cabeçalho)
         if not header_found and "CÓDIGO" in row_str and "DESCRIÇÃO" in row_str and "AQUISIÇÃO" in row_str:
             header_found = True
             for i, col_name in enumerate(row):
@@ -330,7 +328,7 @@ def parse_contmatic_universal(uploaded_file):
                 elif "NOTA FISCAL" in col_clean: col_map['nf'] = i
                 elif "GRUPO" in col_clean: col_map['grupo'] = i
                 elif "AQUISIÇÃO" in col_clean or "AQUISICAO" in col_clean: col_map['aquisicao'] = i
-                elif "COMPRA" in col_clean or "AQUISICAO" in col_clean: col_map['valor'] = i # Valor de Compra
+                elif "COMPRA" in col_clean or "AQUISICAO" in col_clean: col_map['valor'] = i
                 elif "INÍCIO" in col_clean and "DEP" in col_clean: col_map['inicio_deprec'] = i
                 elif "TAXA" in col_clean and "DEP" in col_clean: col_map['taxa'] = i
                 elif "ACUMULADA" in col_clean and "DEP" in col_clean: col_map['deprec_acum'] = i
@@ -360,7 +358,6 @@ def parse_contmatic_universal(uploaded_file):
                 codigos_vistos[raw_cod] = 0
                 final_cod = raw_cod
 
-            # Trata decimais do Excel (Ex: 140000.0 vira 140000,00)
             def format_num_contmatic(v):
                 if not v or v == "0": return "0,00"
                 if '.' in v and ',' not in v:
@@ -558,6 +555,12 @@ if not st.session_state.df_bens.empty:
         txt_output = generate_dominio_txt(df, configs, de_para_map)
         st.success("Arquivo gerado com sucesso!")
         st.download_button(label="📥 Baixar TXT (Registro 0450)", data=txt_output, file_name="importacao_bens_dominio.txt", mime="text/plain")
+        
+        # --- NOVO AVISO DE IMPORTAÇÃO ---
+        st.info(
+            "**Passo a passo para importar na Domínio:**\n\n"
+            "No módulo **CONTABILIDADE**, acesse o menu **UTILITÁRIOS > IMPORTAÇÃO > IMPORTAÇÃO PADRÃO > LEIAUTE DOMÍNIO SISTEMAS COM SEPARADOR**."
+        )
     
     with st.expander("🔍 Conferência Detalhada dos Dados"):
         st.dataframe(df)
