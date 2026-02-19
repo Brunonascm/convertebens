@@ -36,13 +36,14 @@ MANUAIS = {
             "5. Clique em **Processar** e salve em EXCEL. Se o Excel abrir com aviso de erro, clique em 'Sim', vá em **Salvar Como** e escolha **Pasta de Trabalho do Excel (.xlsx)**."
         ]
     },
-    "Contmatic (Excel/CSV)": {
+"Contmatic (Excel/CSV)": {
         "titulo": "Como exportar no Contmatic (Phoenix)",
         "passos": [
-            "1. Acesse o módulo **Ativo Fixo**.",
-            "2. Vá em **Relatórios > Cadastrais > Cadastro de Bens**.",
-            "3. Exporte a listagem completa na opção **Exportar para Excel**.",
-            "4. Salve o arquivo gerado e faça o upload aqui na ferramenta."
+            "1. Acesse o menu **Ativo Imobilizado**.",
+            "2. Vá em **Relatórios > Cadastro de Bens**.",
+            "3. Informe o Período desejado.",
+            "4. No quadro Imprimir, marque a opção **Todos** e selecione **Planilha xlsx**.",
+            "5. Clique em **Imprimir**, salve o arquivo gerado e faça o upload aqui."
         ]
     }
 }
