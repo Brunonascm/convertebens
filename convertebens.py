@@ -20,20 +20,29 @@ MANUAIS = {
         "titulo": "Como exportar o arquivo no IOB",
         "passos": [
             "1. Acesse o módulo **Office Contábil**.",
-            "2. Vá no menu **Relatórios > Diversos**.",
+            "2. Vá no menu **Relatórios > Diversos**",
             "3. Selecione o modelo **Relação Completa dos Bens**.",
-            "4. Marque as opções **imprimir bens baixados** e **ordenar pelo código**.",
+            "4. Marque as opções **imprimir bens baixados** e **ordenar pelo código**",
             "5. Salve o arquivo em .TXT e faça o upload aqui."
         ]
     },
     "Prosoft (Excel/CSV)": {
         "titulo": "Como exportar no Prosoft",
         "passos": [
-            "1. Acesse o menu **Contábil > Ativo Fixo > Processamentos > Relatórios > Movimentações**.",
-            "2. Informe o código da empresa.",
-            "3. Acesse a opção **Depreciações**.",
+            "1. Acesse o menu **Contábil > Ativo Fixo > Processamentos > Relatórios > Movimentações**",
+            "2. Informe o código da empresa",
+            "3. Acesse a opção **Depreciações**",
             "4. Marque as opções **Mostrar valores na tela**, **Imprimir bens sem valores de depreciação**, **imprimir valores p/ bens totalmente depreciados** e **Imprimir valores p/bens mantidos para venda**.",
-            "5. Clique em **Processar** e salve em EXCEL. Se o Excel abrir com aviso de erro, clique em 'Sim', vá em **Salvar Como** e escolha **Pasta de Trabalho do Excel (.xlsx)**."
+            "5. Clique em **Processar** e salve em EXCEL, se o Excel abrir com aviso de erro, clique em 'Sim', vá em **Salvar Como** e escolha **Pasta de Trabalho do Excel (.xlsx)**."
+        ]
+    },
+    "Contmatic (Excel/CSV)": {
+        "titulo": "Como exportar no Contmatic (Phoenix)",
+        "passos": [
+            "1. Acesse o módulo **Ativo Fixo**.",
+            "2. Vá em **Relatórios > Cadastrais > Cadastro de Bens** (ou similar).",
+            "3. Exporte a listagem completa na opção **Exportar para Excel**.",
+            "4. Salve o arquivo gerado e faça o upload aqui na ferramenta."
         ]
     }
 }
@@ -274,6 +283,112 @@ def parse_prosoft_universal(uploaded_file):
             
     return pd.DataFrame(bens)
 
+def parse_contmatic_universal(uploaded_file):
+    filename = uploaded_file.name.lower()
+    rows = []
+    
+    if filename.endswith('.xlsx') or filename.endswith('.xls'):
+        try:
+            df_raw = pd.read_excel(uploaded_file, header=None)
+            rows = df_raw.fillna("").astype(str).values.tolist()
+        except Exception as e:
+            st.error(f"Erro ao ler Excel Contmatic: {e}")
+            return pd.DataFrame()
+    else:
+        try: stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
+        except: stringio = io.StringIO(uploaded_file.getvalue().decode("latin-1"))
+        
+        # O Contmatic pode variar o separador no CSV
+        try:
+            sniffer = csv.Sniffer()
+            sample = stringio.read(2048)
+            stringio.seek(0)
+            dialect = sniffer.sniff(sample)
+            reader = csv.reader(stringio, dialect)
+        except:
+            stringio.seek(0)
+            reader = csv.reader(stringio, delimiter=',') # Fallback para vírgula
+            
+        rows = list(reader)
+
+    bens = []
+    header_found = False
+    col_map = {}
+    codigos_vistos = {} 
+
+    for row in rows:
+        if not row: continue
+        row_str = " ".join(str(x) for x in row).upper()
+        
+        # Mapeamento Dinâmico das Colunas (Lê o cabeçalho)
+        if not header_found and "CÓDIGO" in row_str and "DESCRIÇÃO" in row_str and "AQUISIÇÃO" in row_str:
+            header_found = True
+            for i, col_name in enumerate(row):
+                col_clean = str(col_name).strip().upper()
+                if col_clean == "CÓDIGO" or col_clean == "CODIGO": col_map['codigo'] = i
+                elif "DESCRIÇÃO" in col_clean or "DESCRICAO" in col_clean: col_map['descricao'] = i
+                elif "NOTA FISCAL" in col_clean: col_map['nf'] = i
+                elif "GRUPO" in col_clean: col_map['grupo'] = i
+                elif "AQUISIÇÃO" in col_clean or "AQUISICAO" in col_clean: col_map['aquisicao'] = i
+                elif "COMPRA" in col_clean or "AQUISICAO" in col_clean: col_map['valor'] = i # Valor de Compra
+                elif "INÍCIO" in col_clean and "DEP" in col_clean: col_map['inicio_deprec'] = i
+                elif "TAXA" in col_clean and "DEP" in col_clean: col_map['taxa'] = i
+                elif "ACUMULADA" in col_clean and "DEP" in col_clean: col_map['deprec_acum'] = i
+            continue
+            
+        if not header_found: continue
+        
+        def get_col(key):
+            if key in col_map and col_map[key] < len(row):
+                val = str(row[col_map[key]]).strip()
+                if val.upper() == "NAN": return ""
+                return val
+            return ""
+
+        cod = get_col('codigo')
+        if not cod or cod == "": continue
+
+        if "TOTAL" in cod.upper() or "TOTAL" in get_col('descricao').upper(): continue
+            
+        try:
+            raw_cod = cod.replace('-', '').replace('/', '')
+            
+            if raw_cod in codigos_vistos:
+                codigos_vistos[raw_cod] += 1
+                final_cod = f"{raw_cod}-{codigos_vistos[raw_cod]}"
+            else:
+                codigos_vistos[raw_cod] = 0
+                final_cod = raw_cod
+
+            # Trata decimais do Excel (Ex: 140000.0 vira 140000,00)
+            def format_num_contmatic(v):
+                if not v or v == "0": return "0,00"
+                if '.' in v and ',' not in v:
+                    v = v.replace('.', ',')
+                return v
+                
+            grupo_nome = get_col('grupo')
+            if grupo_nome: grupo_nome = f"GRUPO {grupo_nome}"
+
+            bem = {
+                "codigo": final_cod,
+                "descricao": get_col('descricao'),
+                "data_aquisicao": get_col('aquisicao'),
+                "valor_original": format_num_contmatic(get_col('valor')),
+                "inicio_depreciacao": get_col('inicio_deprec'),
+                "taxa": format_num_contmatic(get_col('taxa')),
+                "nota_fiscal": get_col('nf'),
+                "depreciacao_acumulada": format_num_contmatic(get_col('deprec_acum')),
+                "baixado": False,
+                "conta_origem_desc": grupo_nome,
+                "duplicado": True if raw_cod != final_cod else False
+            }
+            bens.append(bem)
+        except Exception as e:
+            continue
+            
+    return pd.DataFrame(bens)
+
 # --- Gerador Domínio ---
 
 def generate_dominio_txt(df, configs, de_para_contas):
@@ -371,7 +486,7 @@ def generate_dominio_txt(df, configs, de_para_contas):
 # --- Interface Gráfica ---
 
 st.sidebar.header("⚙️ Central de Configuração")
-sistema = st.sidebar.selectbox("Selecione o Sistema de Origem", ["IOB", "Prosoft (Excel/CSV)"])
+sistema = st.sidebar.selectbox("Selecione o Sistema de Origem", ["IOB", "Prosoft (Excel/CSV)", "Contmatic (Excel/CSV)"])
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Parâmetros Domínio")
@@ -404,6 +519,8 @@ if uploaded_file:
                     st.session_state.df_bens = parse_iob(content)
                 elif sistema == "Prosoft (Excel/CSV)":
                     st.session_state.df_bens = parse_prosoft_universal(uploaded_file)
+                elif sistema == "Contmatic (Excel/CSV)":
+                    st.session_state.df_bens = parse_contmatic_universal(uploaded_file)
             except Exception as e:
                 st.error(f"Erro ao ler arquivo: {e}")
 
@@ -447,5 +564,4 @@ if not st.session_state.df_bens.empty:
 
 if st.sidebar.button("Limpar / Novo Arquivo"):
     st.session_state.df_bens = pd.DataFrame()
-
     st.rerun()
