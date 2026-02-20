@@ -662,8 +662,17 @@ if not st.session_state.df_bens.empty:
     st.markdown("---")
     if st.button("🚀 Gerar Arquivo de Importação", type="primary"):
         txt_output = generate_dominio_txt(df, configs, de_para_map)
+        
+        # --- AQUI ESTÁ A CORREÇÃO DE CODIFICAÇÃO PARA O DOMÍNIO (ANSI/CP1252) ---
+        txt_bytes = txt_output.encode('cp1252', errors='replace')
+        
         st.success("Arquivo gerado com sucesso!")
-        st.download_button(label="📥 Baixar TXT (Registro 0450)", data=txt_output, file_name="importacao_bens_dominio.txt", mime="text/plain")
+        st.download_button(
+            label="📥 Baixar TXT (Registro 0450)", 
+            data=txt_bytes, 
+            file_name="importacao_bens_dominio.txt", 
+            mime="text/plain"
+        )
         
         st.info(
             "**Passo a passo para importar na Domínio:**\n\n"
