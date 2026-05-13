@@ -274,7 +274,6 @@ def parse_contmatic_universal(uploaded_file):
     
     if filename.endswith('.xlsx') or filename.endswith('.xls'):
         try:
-            # header=None garante que o Pandas não engula a primeira linha
             df_raw = pd.read_excel(uploaded_file, header=None)
             rows = df_raw.fillna("").astype(str).values.tolist()
         except Exception as e:
@@ -305,7 +304,6 @@ def parse_contmatic_universal(uploaded_file):
         if not row: continue
         row_str = " ".join(str(x) for x in row).upper()
         
-        # Mapeamento dinâmico: procura onde estão as colunas importantes
         if not header_found and ("CÓDIGO" in row_str or "CODIGO" in row_str) and "AQUISIÇÃO" in row_str:
             header_found = True
             for i, col_name in enumerate(row):
@@ -348,7 +346,7 @@ def parse_contmatic_universal(uploaded_file):
                 "descricao": get_col('descricao'),
                 "data_aquisicao": get_col('aquisicao'),
                 "valor_original": get_col('valor') or "0,00",
-                "depreciacao_acumulada": "0,00", # A depreciação é deixada zerada aqui para ser injetada pelo Mapa
+                "depreciacao_acumulada": "0,00", 
                 "conta_origem_desc": grupo_nome,
                 "taxa": "0,00",
                 "duplicado": True if raw_cod != final_cod else False
@@ -360,24 +358,69 @@ def parse_contmatic_universal(uploaded_file):
     return pd.DataFrame(bens)
 
 def parse_mapa_saldo_contmatic(uploaded_file):
-    """Lê o arquivo de Mapa de Imobilizado para extrair saldos acumulados"""
+    """Lê o arquivo de Mapa de Imobilizado para extrair saldos acumulados de forma dinâmica"""
     try:
         if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='latin-1', skiprows=1)
+            try:
+                sniffer = csv.Sniffer()
+                stringio = io.StringIO(uploaded_file.getvalue().decode("latin-1"))
+                sample = stringio.read(2048)
+                stringio.seek(0)
+                dialect = sniffer.sniff(sample)
+                reader = csv.reader(stringio, dialect)
+                rows = list(reader)
+            except:
+                stringio.seek(0)
+                reader = csv.reader(stringio, delimiter=',')
+                rows = list(reader)
         else:
-            df = pd.read_excel(uploaded_file, skiprows=1)
+            df = pd.read_excel(uploaded_file, header=None)
+            rows = df.fillna("").astype(str).values.tolist()
     except: return {}
 
     saldos = {}
-    # Mapa de colunas baseado no arquivo enviado (Código, Descrição, Aquisição, Valor Aquisição, Valor Corrigido, Depr.Anterior...)
-    for _, row in df.iterrows():
+    header_found = False
+    col_map = {}
+
+    for row in rows:
+        if not row: continue
+        row_str = " ".join(str(x) for x in row).upper()
+        
+        # Procura pelo cabeçalho no Mapa
+        if not header_found and "CÓDIGO" in row_str and ("DEPR.ATUAL" in row_str or "ATUAL" in row_str or "ACUMULADA" in row_str):
+            header_found = True
+            for i, col_name in enumerate(row):
+                col_clean = str(col_name).strip().upper()
+                if col_clean == "CÓDIGO" or col_clean == "CODIGO": col_map['codigo'] = i
+                # A coluna "Depr.Atual" no Contmatic já é o saldo total acumulado
+                elif "DEPR.ATUAL" in col_clean or "DEPR. ATUAL" in col_clean or "ACUMULADA" in col_clean: col_map['acumulada'] = i
+            continue
+            
+        if not header_found: continue
+        
         try:
-            cod = str(row.iloc[0]).strip().replace('-', '').replace('/', '')
-            # O saldo acumulado é a soma da Depr.Anterior + Depr.Atual (ou apenas Anterior dependendo da data de corte)
-            anterior = float(str(row.iloc[5]).replace('.', '').replace(',', '.')) if not pd.isna(row.iloc[5]) else 0
-            atual = float(str(row.iloc[7]).replace('.', '').replace(',', '.')) if not pd.isna(row.iloc[7]) else 0
-            saldos[cod] = f"{anterior + atual:.2f}".replace('.', ',')
+            cod_idx = col_map.get('codigo')
+            val_idx = col_map.get('acumulada')
+            
+            if cod_idx is None or val_idx is None or cod_idx >= len(row) or val_idx >= len(row): continue
+            
+            cod = str(row[cod_idx]).strip()
+            if not cod or "TOTAL" in cod.upper(): continue
+            
+            cod = cod.replace('-', '').replace('/', '')
+            
+            val_str = str(row[val_idx]).strip()
+            if val_str.upper() == "NAN" or not val_str: val_str = "0"
+            
+            if '.' in val_str and ',' in val_str:
+                val_str = val_str.replace('.', '').replace(',', '.')
+            elif ',' in val_str:
+                val_str = val_str.replace(',', '.')
+                
+            atual = float(val_str)
+            saldos[cod] = f"{atual:.2f}".replace('.', ',')
         except: continue
+        
     return saldos
 
 def parse_planilha_simplificada(df_input):
@@ -409,8 +452,8 @@ def parse_planilha_simplificada(df_input):
                 "data_aquisicao": safe_str(row.get('Data Aquisição', '')),
                 "valor_original": safe_str(row.get('Valor Original', '0,00'), "0,00"),
                 "inicio_depreciacao": "", 
-                "taxa": "0,00", # Deixa zerado para o Domínio puxar da Conta Contábil
-                "nota_fiscal": "", # Removido da planilha
+                "taxa": "0,00", 
+                "nota_fiscal": "", 
                 "depreciacao_acumulada": safe_str(row.get('Depreciação Acumulada', '0,00'), "0,00"),
                 "baixado": False,
                 "conta_origem_desc": safe_str(row.get('Grupo ou Conta', 'GERAL'), "GERAL"),
@@ -602,7 +645,6 @@ elif sistema == "Contmatic (Excel/CSV)":
             df_main = parse_contmatic_universal(f1)
             if f2:
                 saldos_map = parse_mapa_saldo_contmatic(f2)
-                # Removemos os traços e barras para garantir o de-para correto na hora de cruzar as chaves
                 df_main['depreciacao_acumulada'] = df_main['codigo'].map(
                     lambda x: str(saldos_map.get(str(x).replace('-', '').replace('/', ''), "0,00"))
                 )
@@ -664,7 +706,6 @@ if not st.session_state.df_bens.empty:
     if st.button("🚀 Gerar Arquivo de Importação", type="primary"):
         txt_output = generate_dominio_txt(df, configs, de_para_map)
         
-        # Correção de codificação para o Domínio (ANSI/CP1252)
         txt_bytes = txt_output.encode('cp1252', errors='replace')
         
         st.success("Arquivo gerado com sucesso!")
