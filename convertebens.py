@@ -429,45 +429,40 @@ def parse_mapa_saldo_contmatic(uploaded_file):
     return saldos
 
 def parse_exactus(uploaded_file):
-    """Lê o relatório de Cadastro de Itens exportado do sistema Exactus."""
-    filename = uploaded_file.name.lower()
-    rows = []
-    
     def clean_numeric_str(v_str):
         if not v_str: return 0.0
         v_str = str(v_str).strip()
         if '.' in v_str and ',' in v_str:
             last_dot = v_str.rfind('.')
             last_comma = v_str.rfind(',')
-            if last_comma > last_dot:
-                v_str = v_str.replace('.', '').replace(',', '.')
-            else:
-                v_str = v_str.replace(',', '')
-        elif ',' in v_str:
-            v_str = v_str.replace(',', '.')
-        try:
-            return float(v_str)
-        except:
-            return 0.0
+            if last_comma > last_dot: v_str = v_str.replace('.', '').replace(',', '.')
+            else: v_str = v_str.replace(',', '')
+        elif ',' in v_str: v_str = v_str.replace(',', '.')
+        try: return float(re.sub(r'[^\d.-]', '', v_str))
+        except: return 0.0
 
+    # 1. Leitura Radar: ignora estrutura do Excel e trata como texto bruto para evitar erros de formatação
     try:
-        df_raw = pd.read_excel(uploaded_file, header=None)
-        rows = df_raw.fillna("").astype(str).values.tolist()
-    except Exception:
-        try:
-            stringio = io.StringIO(uploaded_file.getvalue().decode("latin-1"))
+        content = uploaded_file.getvalue().decode("latin-1")
+        if "<table" in content.lower():
+            dfs = pd.read_html(io.StringIO(content))
+            rows = dfs[0].fillna("").astype(str).values.tolist() if dfs else []
+        elif "\x00" in content[:100]:
+            df_raw = pd.read_excel(uploaded_file, header=None)
+            rows = df_raw.fillna("").astype(str).values.tolist()
+        else:
+            stringio = io.StringIO(content)
             try:
                 sniffer = csv.Sniffer()
-                sample = stringio.read(2048)
+                dialect = sniffer.sniff(stringio.read(2048))
                 stringio.seek(0)
-                dialect = sniffer.sniff(sample)
                 reader = csv.reader(stringio, dialect)
             except Exception:
                 stringio.seek(0)
                 reader = csv.reader(stringio, delimiter=',')
             rows = list(reader)
-        except Exception:
-            pass
+    except Exception:
+        return pd.DataFrame()
 
     bens = []
     current_bem = {}
@@ -477,21 +472,31 @@ def parse_exactus(uploaded_file):
     for row in rows:
         if not row: continue
         row_clean = [str(x).strip() for x in row]
+        row_str = " | ".join(row_clean).upper()
         
-        # Identifica a Conta Contábil atual (bloco)
-        if len(row_clean) > 0 and row_clean[0] == 'Conta:':
-            if len(row_clean) > 2:
-                current_conta = row_clean[2]
+        # Mapeamento dinâmico Conta
+        if "CONTA:" in row_str:
+            for i, cell in enumerate(row_clean):
+                if "CONTA:" in cell.upper():
+                    if len(row_clean) > i + 2 and row_clean[i+2]: current_conta = row_clean[i+2]
+                    elif len(row_clean) > i + 1 and row_clean[i+1]: current_conta = row_clean[i+1]
             continue
             
-        # Identifica o início de um novo Item (Bem)
-        if len(row_clean) > 0 and row_clean[0] == 'Item:':
-            if current_bem:
-                bens.append(current_bem)
+        # Mapeamento dinâmico Item
+        if "ITEM:" in row_str:
+            if current_bem: bens.append(current_bem)
             
-            raw_cod = row_clean[2].replace('-', '').replace('/', '') if len(row_clean) > 2 else ""
-            if not raw_cod:
-                continue
+            raw_cod = ""
+            desc = ""
+            parts = [p.strip() for p in re.split(r'[,;\t|]', row_clean[0])] if len(row_clean) == 1 else row_clean
+                
+            for i, cell in enumerate(parts):
+                if "ITEM:" in cell.upper():
+                    if len(parts) > i + 2: raw_cod = parts[i+2].replace('-', '').replace('/', '')
+                    if len(parts) > i + 4: desc = parts[i+4]
+                    break
+                    
+            if not raw_cod: continue
 
             if raw_cod in codigos_vistos:
                 codigos_vistos[raw_cod] += 1
@@ -500,8 +505,6 @@ def parse_exactus(uploaded_file):
                 codigos_vistos[raw_cod] = 0
                 final_cod = raw_cod
                 
-            desc = row_clean[4] if len(row_clean) > 4 else ""
-            
             current_bem = {
                 "codigo": final_cod,
                 "descricao": desc,
@@ -514,39 +517,38 @@ def parse_exactus(uploaded_file):
             }
             continue
             
-        if not current_bem:
-            continue
-            
-        # Puxa a Data de Aquisição
-        if row_clean[0] == 'Dt.Aquisição:':
-            current_bem['data_aquisicao'] = row_clean[1] if len(row_clean) > 1 else ""
-            
-        # Puxa o Valor Original
-        if 'Valor Atualizado:' in row_clean:
-            try:
-                val_float = clean_numeric_str(row_clean[2])
-                current_bem['valor_original'] = f"{val_float:.2f}".replace('.', ',')
-            except:
-                pass
-
-        # Calcula a Depreciação Acumulada
-        if 'Residual Contábil:' in row_clean:
-            try:
-                v_base = clean_numeric_str(row_clean[2])
-                v_res = clean_numeric_str(row_clean[4])
+        if not current_bem: continue
+        
+        parts = row_clean if len(row_clean) > 1 else [p.strip() for p in re.split(r'[,;\t|]', row_clean[0])]
+        
+        # Mapeamento de Data
+        if "DT.AQUISIÇÃO:" in row_str or "DT.AQUISICAO:" in row_str:
+            for i, cell in enumerate(parts):
+                if "DT.AQUISIÇÃO" in cell.upper() or "DT.AQUISICAO" in cell.upper():
+                    if len(parts) > i + 1 and parts[i+1]:
+                        current_bem['data_aquisicao'] = parts[i+1]
+                    break
+                    
+        # Mapeamento de Valores
+        if "VALOR ATUALIZADO:" in row_str:
+            nums = [clean_numeric_str(x) for x in parts if clean_numeric_str(x) > 0]
+            if nums:
+                current_bem['valor_original'] = f"{nums[0]:.2f}".replace('.', ',')
+                
+        # Mapeamento de Depreciação
+        if "RESIDUAL CONTÁBIL:" in row_str or "RESIDUAL CONTABIL:" in row_str:
+            nums = [clean_numeric_str(x) for x in parts if clean_numeric_str(x) > 0]
+            if len(nums) >= 2:
+                v_base = nums[0]
+                v_res = nums[1]
                 acumulada = v_base - v_res
                 if acumulada < 0: acumulada = 0.0
                 current_bem['depreciacao_acumulada'] = f"{acumulada:.2f}".replace('.', ',')
-            except:
-                pass
 
-    if current_bem:
-        bens.append(current_bem)
-        
+    if current_bem: bens.append(current_bem)
     return pd.DataFrame(bens)
 
 def parse_planilha_simplificada(df_input):
-    """Processa a planilha padrão gerada pela própria ferramenta."""
     bens = []
     codigos_vistos = {}
     
@@ -774,7 +776,11 @@ elif sistema == "Contmatic (Excel/CSV)":
                     lambda x: str(saldos_map.get(str(x).replace('-', '').replace('/', ''), "0,00"))
                 )
             st.session_state.df_bens = df_main
-            st.rerun()
+            
+            if st.session_state.df_bens.empty:
+                st.warning("⚠️ Não foi possível encontrar bens processáveis nos arquivos. Verifique os relatórios.")
+            else:
+                st.rerun()
 
 # --- FLUXO DOS SISTEMAS PADRÃO E EXACTUS ---
 else:
@@ -797,7 +803,10 @@ else:
                     elif sistema == "Exactus (Excel/CSV)":
                         st.session_state.df_bens = parse_exactus(uploaded_file)
                 except Exception as e:
-                    st.error(f"Erro ao ler arquivo: {e}")
+                    st.error(f"Erro inesperado ao ler arquivo: {e}")
+                    
+                if st.session_state.df_bens.empty:
+                    st.warning("⚠️ Não foi possível extrair nenhum bem deste arquivo. Verifique se a exportação está no formato correto.")
 
 # --- TELA DE RESULTADOS E EXPORTAÇÃO (Comum a todos) ---
 if not st.session_state.df_bens.empty:
