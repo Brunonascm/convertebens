@@ -44,6 +44,14 @@ MANUAIS = {
             "3. Salve ambos e utilize os campos de upload abaixo."
         ]
     },
+    "Exactus (Excel/CSV)": {
+        "titulo": "Como exportar no Exactus",
+        "passos": [
+            "1. Acesse o relatório de Cadastro de Itens Relatórios - SGI > Cadastros > Item",
+            "2. Exporte o arquivo no formato Excel (.xls/.xlsx) ou CSV.",
+            "3. Salve o arquivo e faça o upload abaixo."
+        ]
+    },
     "Planilha Simplificada / Copiar e Colar": {
         "titulo": "Como usar a Planilha Simplificada",
         "passos": [
@@ -358,7 +366,6 @@ def parse_contmatic_universal(uploaded_file):
     return pd.DataFrame(bens)
 
 def parse_mapa_saldo_contmatic(uploaded_file):
-    """Lê o arquivo de Mapa de Imobilizado para extrair saldos acumulados de forma dinâmica"""
     try:
         if uploaded_file.name.endswith('.csv'):
             try:
@@ -386,13 +393,11 @@ def parse_mapa_saldo_contmatic(uploaded_file):
         if not row: continue
         row_str = " ".join(str(x) for x in row).upper()
         
-        # Procura pelo cabeçalho no Mapa
         if not header_found and "CÓDIGO" in row_str and ("DEPR.ATUAL" in row_str or "ATUAL" in row_str or "ACUMULADA" in row_str):
             header_found = True
             for i, col_name in enumerate(row):
                 col_clean = str(col_name).strip().upper()
                 if col_clean == "CÓDIGO" or col_clean == "CODIGO": col_map['codigo'] = i
-                # A coluna "Depr.Atual" no Contmatic já é o saldo total acumulado
                 elif "DEPR.ATUAL" in col_clean or "DEPR. ATUAL" in col_clean or "ACUMULADA" in col_clean: col_map['acumulada'] = i
             continue
             
@@ -422,6 +427,123 @@ def parse_mapa_saldo_contmatic(uploaded_file):
         except: continue
         
     return saldos
+
+def parse_exactus(uploaded_file):
+    """Lê o relatório de Cadastro de Itens exportado do sistema Exactus."""
+    filename = uploaded_file.name.lower()
+    rows = []
+    
+    def clean_numeric_str(v_str):
+        if not v_str: return 0.0
+        v_str = str(v_str).strip()
+        if '.' in v_str and ',' in v_str:
+            last_dot = v_str.rfind('.')
+            last_comma = v_str.rfind(',')
+            if last_comma > last_dot:
+                v_str = v_str.replace('.', '').replace(',', '.')
+            else:
+                v_str = v_str.replace(',', '')
+        elif ',' in v_str:
+            v_str = v_str.replace(',', '.')
+        try:
+            return float(v_str)
+        except:
+            return 0.0
+
+    try:
+        df_raw = pd.read_excel(uploaded_file, header=None)
+        rows = df_raw.fillna("").astype(str).values.tolist()
+    except Exception:
+        try:
+            stringio = io.StringIO(uploaded_file.getvalue().decode("latin-1"))
+            try:
+                sniffer = csv.Sniffer()
+                sample = stringio.read(2048)
+                stringio.seek(0)
+                dialect = sniffer.sniff(sample)
+                reader = csv.reader(stringio, dialect)
+            except Exception:
+                stringio.seek(0)
+                reader = csv.reader(stringio, delimiter=',')
+            rows = list(reader)
+        except Exception:
+            pass
+
+    bens = []
+    current_bem = {}
+    current_conta = "GERAL"
+    codigos_vistos = {}
+
+    for row in rows:
+        if not row: continue
+        row_clean = [str(x).strip() for x in row]
+        
+        # Identifica a Conta Contábil atual (bloco)
+        if len(row_clean) > 0 and row_clean[0] == 'Conta:':
+            if len(row_clean) > 2:
+                current_conta = row_clean[2]
+            continue
+            
+        # Identifica o início de um novo Item (Bem)
+        if len(row_clean) > 0 and row_clean[0] == 'Item:':
+            if current_bem:
+                bens.append(current_bem)
+            
+            raw_cod = row_clean[2].replace('-', '').replace('/', '') if len(row_clean) > 2 else ""
+            if not raw_cod:
+                continue
+
+            if raw_cod in codigos_vistos:
+                codigos_vistos[raw_cod] += 1
+                final_cod = f"{raw_cod}-{codigos_vistos[raw_cod]}"
+            else:
+                codigos_vistos[raw_cod] = 0
+                final_cod = raw_cod
+                
+            desc = row_clean[4] if len(row_clean) > 4 else ""
+            
+            current_bem = {
+                "codigo": final_cod,
+                "descricao": desc,
+                "conta_origem_desc": current_conta,
+                "data_aquisicao": "",
+                "valor_original": "0,00",
+                "depreciacao_acumulada": "0,00",
+                "taxa": "0,00",
+                "duplicado": True if raw_cod != final_cod else False
+            }
+            continue
+            
+        if not current_bem:
+            continue
+            
+        # Puxa a Data de Aquisição
+        if row_clean[0] == 'Dt.Aquisição:':
+            current_bem['data_aquisicao'] = row_clean[1] if len(row_clean) > 1 else ""
+            
+        # Puxa o Valor Original
+        if 'Valor Atualizado:' in row_clean:
+            try:
+                val_float = clean_numeric_str(row_clean[2])
+                current_bem['valor_original'] = f"{val_float:.2f}".replace('.', ',')
+            except:
+                pass
+
+        # Calcula a Depreciação Acumulada
+        if 'Residual Contábil:' in row_clean:
+            try:
+                v_base = clean_numeric_str(row_clean[2])
+                v_res = clean_numeric_str(row_clean[4])
+                acumulada = v_base - v_res
+                if acumulada < 0: acumulada = 0.0
+                current_bem['depreciacao_acumulada'] = f"{acumulada:.2f}".replace('.', ',')
+            except:
+                pass
+
+    if current_bem:
+        bens.append(current_bem)
+        
+    return pd.DataFrame(bens)
 
 def parse_planilha_simplificada(df_input):
     """Processa a planilha padrão gerada pela própria ferramenta."""
@@ -562,7 +684,10 @@ def generate_dominio_txt(df, configs, de_para_contas):
 # --- Interface Gráfica ---
 
 st.sidebar.header("⚙️ Central de Configuração")
-sistema = st.sidebar.selectbox("Selecione o Sistema de Origem", ["IOB / Folhamatic", "Prosoft (Excel/CSV)", "Contmatic (Excel/CSV)", "Planilha Simplificada / Copiar e Colar"])
+sistema = st.sidebar.selectbox(
+    "Selecione o Sistema de Origem", 
+    ["IOB / Folhamatic", "Prosoft (Excel/CSV)", "Contmatic (Excel/CSV)", "Exactus (Excel/CSV)", "Planilha Simplificada / Copiar e Colar"]
+)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Parâmetros Domínio")
@@ -651,12 +776,12 @@ elif sistema == "Contmatic (Excel/CSV)":
             st.session_state.df_bens = df_main
             st.rerun()
 
-# --- FLUXO DOS SISTEMAS PADRÃO ---
+# --- FLUXO DOS SISTEMAS PADRÃO E EXACTUS ---
 else:
     if sistema == "IOB / Folhamatic":
         file_types = ["txt"]
     else:
-        file_types = ["csv", "xlsx", "xls"]
+        file_types = ["csv", "xlsx", "xls", "txt"]
         
     uploaded_file = st.file_uploader("Carregue o arquivo", type=file_types)
 
@@ -669,6 +794,8 @@ else:
                         st.session_state.df_bens = parse_iob(content)
                     elif sistema == "Prosoft (Excel/CSV)":
                         st.session_state.df_bens = parse_prosoft_universal(uploaded_file)
+                    elif sistema == "Exactus (Excel/CSV)":
+                        st.session_state.df_bens = parse_exactus(uploaded_file)
                 except Exception as e:
                     st.error(f"Erro ao ler arquivo: {e}")
 
