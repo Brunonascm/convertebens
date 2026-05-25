@@ -47,7 +47,7 @@ MANUAIS = {
     "Exactus (Excel/CSV)": {
         "titulo": "Como exportar no Exactus",
         "passos": [
-            "1. Acesse o relatório de Cadastro de Itens (Ativo Imobilizado) no Exactus.",
+            "1. Acesse o Relatórios - SGI > Cadastros > Item",
             "2. Exporte o arquivo no formato Excel (.xls/.xlsx) ou CSV.",
             "3. Salve o arquivo e faça o upload abaixo."
         ]
@@ -55,9 +55,9 @@ MANUAIS = {
     "Questor (Excel/CSV)": {
         "titulo": "Como exportar no Questor",
         "passos": [
-            "1. Acesse o menu de relatórios do Ativo Imobilizado no Questor.",
-            "2. Gere o **Mapa de Bens** (ou Consulta de Bens Ativos).",
-            "3. Exporte o resultado para Excel (.xls/.xlsx) ou CSV e faça o upload abaixo."
+            "1. Acesse o Módulo Controle Patrimonial > Informe o código da empresa > Consultas > Consultas Bens Ativos",
+            "2. Marque as opções da tela e clique em "Executar"",
+            "3. Clique com o botão direito sobre os bens > Exportar > Excel"
         ]
     },
     "Planilha Simplificada / Copiar e Colar": {
