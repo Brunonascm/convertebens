@@ -56,7 +56,7 @@ MANUAIS = {
         "titulo": "Como exportar no Questor",
         "passos": [
             "1. Acesse o Módulo Controle Patrimonial > Informe o código da empresa > Consultas > Consultas Bens Ativos",
-            "2. Marque as opções da tela e clique em "Executar"",
+            "2. Marque as opções da tela e clique em Executar",
             "3. Clique com o botão direito sobre os bens > Exportar > Excel"
         ]
     },
