@@ -47,9 +47,17 @@ MANUAIS = {
     "Exactus (Excel/CSV)": {
         "titulo": "Como exportar no Exactus",
         "passos": [
-            "1. Acesse o relatório de Cadastro de Itens Relatórios - SGI > Cadastros > Item",
+            "1. Acesse o relatório de Cadastro de Itens (Ativo Imobilizado) no Exactus.",
             "2. Exporte o arquivo no formato Excel (.xls/.xlsx) ou CSV.",
             "3. Salve o arquivo e faça o upload abaixo."
+        ]
+    },
+    "Questor (Excel/CSV)": {
+        "titulo": "Como exportar no Questor",
+        "passos": [
+            "1. Acesse o menu de relatórios do Ativo Imobilizado no Questor.",
+            "2. Gere o **Mapa de Bens** (ou Consulta de Bens Ativos).",
+            "3. Exporte o resultado para Excel (.xls/.xlsx) ou CSV e faça o upload abaixo."
         ]
     },
     "Planilha Simplificada / Copiar e Colar": {
@@ -441,7 +449,6 @@ def parse_exactus(uploaded_file):
         try: return float(re.sub(r'[^\d.-]', '', v_str))
         except: return 0.0
 
-    # 1. Leitura Radar: ignora estrutura do Excel e trata como texto bruto para evitar erros de formatação
     try:
         content = uploaded_file.getvalue().decode("latin-1")
         if "<table" in content.lower():
@@ -474,7 +481,6 @@ def parse_exactus(uploaded_file):
         row_clean = [str(x).strip() for x in row]
         row_str = " | ".join(row_clean).upper()
         
-        # Mapeamento dinâmico Conta
         if "CONTA:" in row_str:
             for i, cell in enumerate(row_clean):
                 if "CONTA:" in cell.upper():
@@ -482,7 +488,6 @@ def parse_exactus(uploaded_file):
                     elif len(row_clean) > i + 1 and row_clean[i+1]: current_conta = row_clean[i+1]
             continue
             
-        # Mapeamento dinâmico Item
         if "ITEM:" in row_str:
             if current_bem: bens.append(current_bem)
             
@@ -521,7 +526,6 @@ def parse_exactus(uploaded_file):
         
         parts = row_clean if len(row_clean) > 1 else [p.strip() for p in re.split(r'[,;\t|]', row_clean[0])]
         
-        # Mapeamento de Data
         if "DT.AQUISIÇÃO:" in row_str or "DT.AQUISICAO:" in row_str:
             for i, cell in enumerate(parts):
                 if "DT.AQUISIÇÃO" in cell.upper() or "DT.AQUISICAO" in cell.upper():
@@ -529,13 +533,11 @@ def parse_exactus(uploaded_file):
                         current_bem['data_aquisicao'] = parts[i+1]
                     break
                     
-        # Mapeamento de Valores
         if "VALOR ATUALIZADO:" in row_str:
             nums = [clean_numeric_str(x) for x in parts if clean_numeric_str(x) > 0]
             if nums:
                 current_bem['valor_original'] = f"{nums[0]:.2f}".replace('.', ',')
                 
-        # Mapeamento de Depreciação
         if "RESIDUAL CONTÁBIL:" in row_str or "RESIDUAL CONTABIL:" in row_str:
             nums = [clean_numeric_str(x) for x in parts if clean_numeric_str(x) > 0]
             if len(nums) >= 2:
@@ -546,6 +548,107 @@ def parse_exactus(uploaded_file):
                 current_bem['depreciacao_acumulada'] = f"{acumulada:.2f}".replace('.', ',')
 
     if current_bem: bens.append(current_bem)
+    return pd.DataFrame(bens)
+
+def parse_questor_universal(uploaded_file):
+    filename = uploaded_file.name.lower()
+    rows = []
+    
+    if filename.endswith('.xlsx') or filename.endswith('.xls'):
+        try:
+            df_raw = pd.read_excel(uploaded_file, header=None)
+            rows = df_raw.fillna("").astype(str).values.tolist()
+        except Exception as e:
+            st.error(f"Erro ao ler Excel Questor: {e}")
+            return pd.DataFrame()
+    else:
+        try: stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
+        except: stringio = io.StringIO(uploaded_file.getvalue().decode("latin-1"))
+        
+        try:
+            sniffer = csv.Sniffer()
+            sample = stringio.read(2048)
+            stringio.seek(0)
+            dialect = sniffer.sniff(sample)
+            reader = csv.reader(stringio, dialect)
+        except:
+            stringio.seek(0)
+            reader = csv.reader(stringio, delimiter=',') 
+            
+        rows = list(reader)
+
+    bens = []
+    header_found = False
+    col_map = {}
+    codigos_vistos = {}
+
+    for row in rows:
+        if not row: continue
+        row_str = " ".join(str(x) for x in row).upper()
+        
+        if not header_found and ("NÚMERO BEM" in row_str or "NUMERO BEM" in row_str) and "DESCRIÇÃO" in row_str:
+            header_found = True
+            for i, col_name in enumerate(row):
+                col_clean = str(col_name).strip().upper()
+                if "NÚMERO BEM" in col_clean or "NUMERO BEM" in col_clean: col_map['codigo'] = i
+                elif "DESCRIÇÃO" in col_clean or "DESCRICAO" in col_clean: col_map['descricao'] = i
+                elif "DATA AQUISIÇÃO" in col_clean or "DATA AQUISICAO" in col_clean: col_map['aquisicao'] = i
+                elif col_clean == "VALOR": col_map['valor'] = i
+                elif "TOTAL ENCARGOS" in col_clean: 
+                    # O Questor tem vários "Total Encargos". Pegamos o primeiro que costuma ser o Acumulado Fiscal
+                    if 'acumulada' not in col_map: col_map['acumulada'] = i
+                elif "CONTA CONTÁBIL" in col_clean or "CONTA CONTABIL" in col_clean: col_map['grupo'] = i
+                elif "PERCENTUAL ENCARGO" in col_clean: col_map['taxa'] = i
+            continue
+            
+        if not header_found: continue
+        
+        def get_col(key):
+            if key in col_map and col_map[key] < len(row):
+                val = str(row[col_map[key]]).strip()
+                if val.upper() == "NAN": return ""
+                return val
+            return ""
+
+        cod_raw = get_col('codigo')
+        if not cod_raw or cod_raw == "" or "TOTAL" in cod_raw.upper() or "SITUAÇÃO" in cod_raw.upper(): continue
+            
+        try:
+            # O Questor as vezes solta o código como float (ex: 2.0). Vamos limpar para "2"
+            cod = cod_raw.split('.')[0] if '.' in cod_raw else cod_raw
+            cod = cod.replace('-', '').replace('/', '')
+            
+            if not cod: continue
+            
+            if cod in codigos_vistos:
+                codigos_vistos[cod] += 1
+                final_cod = f"{cod}-{codigos_vistos[cod]}"
+            else:
+                codigos_vistos[cod] = 0
+                final_cod = cod
+                
+            grupo_raw = get_col('grupo')
+            if grupo_raw: 
+                # Limpa se vier como 1089.0
+                grupo_limpo = grupo_raw.split('.')[0] if '.' in grupo_raw else grupo_raw
+                grupo_nome = f"CONTA {grupo_limpo}"
+            else: 
+                grupo_nome = "GERAL"
+
+            bem = {
+                "codigo": final_cod,
+                "descricao": get_col('descricao'),
+                "data_aquisicao": get_col('aquisicao'),
+                "valor_original": format_currency_dominio(get_col('valor')),
+                "depreciacao_acumulada": format_currency_dominio(get_col('acumulada')), 
+                "conta_origem_desc": grupo_nome,
+                "taxa": format_currency_dominio(get_col('taxa')),
+                "duplicado": True if cod != final_cod else False
+            }
+            bens.append(bem)
+        except Exception:
+            continue
+            
     return pd.DataFrame(bens)
 
 def parse_planilha_simplificada(df_input):
@@ -688,7 +791,7 @@ def generate_dominio_txt(df, configs, de_para_contas):
 st.sidebar.header("⚙️ Central de Configuração")
 sistema = st.sidebar.selectbox(
     "Selecione o Sistema de Origem", 
-    ["IOB / Folhamatic", "Prosoft (Excel/CSV)", "Contmatic (Excel/CSV)", "Exactus (Excel/CSV)", "Planilha Simplificada / Copiar e Colar"]
+    ["IOB / Folhamatic", "Prosoft (Excel/CSV)", "Contmatic (Excel/CSV)", "Exactus (Excel/CSV)", "Questor (Excel/CSV)", "Planilha Simplificada / Copiar e Colar"]
 )
 
 st.sidebar.markdown("---")
@@ -782,7 +885,7 @@ elif sistema == "Contmatic (Excel/CSV)":
             else:
                 st.rerun()
 
-# --- FLUXO DOS SISTEMAS PADRÃO E EXACTUS ---
+# --- FLUXO DOS DEMAIS SISTEMAS ---
 else:
     if sistema == "IOB / Folhamatic":
         file_types = ["txt"]
@@ -802,6 +905,8 @@ else:
                         st.session_state.df_bens = parse_prosoft_universal(uploaded_file)
                     elif sistema == "Exactus (Excel/CSV)":
                         st.session_state.df_bens = parse_exactus(uploaded_file)
+                    elif sistema == "Questor (Excel/CSV)":
+                        st.session_state.df_bens = parse_questor_universal(uploaded_file)
                 except Exception as e:
                     st.error(f"Erro inesperado ao ler arquivo: {e}")
                     
