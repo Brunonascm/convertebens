@@ -56,8 +56,16 @@ MANUAIS = {
         "titulo": "Como exportar no Questor",
         "passos": [
             "1. Acesse o Módulo Controle Patrimonial > Informe o código da empresa > Consultas > Consultas Bens Ativos",
-            "2. Marque as opções da tela e clique em Executar",
+            "2. Marque as opções da tela e clique em 'Executar'",
             "3. Clique com o botão direito sobre os bens > Exportar > Excel"
+        ]
+    },
+    "SCI / Único (TXT)": {
+        "titulo": "Como exportar no SCI / Único",
+        "passos": [
+            "1. Acesse o sistema SCI Único / Patrimônio.",
+            "2. Exporte o arquivo de cadastro de bens em formato TXT (Layout Padrão).",
+            "3. Faça o upload do arquivo gerado abaixo."
         ]
     },
     "Planilha Simplificada / Copiar e Colar": {
@@ -595,7 +603,6 @@ def parse_questor_universal(uploaded_file):
                 elif "DATA AQUISIÇÃO" in col_clean or "DATA AQUISICAO" in col_clean: col_map['aquisicao'] = i
                 elif col_clean == "VALOR": col_map['valor'] = i
                 elif "TOTAL ENCARGOS" in col_clean: 
-                    # O Questor tem vários "Total Encargos". Pegamos o primeiro que costuma ser o Acumulado Fiscal
                     if 'acumulada' not in col_map: col_map['acumulada'] = i
                 elif "CONTA CONTÁBIL" in col_clean or "CONTA CONTABIL" in col_clean: col_map['grupo'] = i
                 elif "PERCENTUAL ENCARGO" in col_clean: col_map['taxa'] = i
@@ -614,7 +621,6 @@ def parse_questor_universal(uploaded_file):
         if not cod_raw or cod_raw == "" or "TOTAL" in cod_raw.upper() or "SITUAÇÃO" in cod_raw.upper(): continue
             
         try:
-            # O Questor as vezes solta o código como float (ex: 2.0). Vamos limpar para "2"
             cod = cod_raw.split('.')[0] if '.' in cod_raw else cod_raw
             cod = cod.replace('-', '').replace('/', '')
             
@@ -629,7 +635,6 @@ def parse_questor_universal(uploaded_file):
                 
             grupo_raw = get_col('grupo')
             if grupo_raw: 
-                # Limpa se vier como 1089.0
                 grupo_limpo = grupo_raw.split('.')[0] if '.' in grupo_raw else grupo_raw
                 grupo_nome = f"CONTA {grupo_limpo}"
             else: 
@@ -649,6 +654,48 @@ def parse_questor_universal(uploaded_file):
         except Exception:
             continue
             
+    return pd.DataFrame(bens)
+
+def parse_sci_unico(file_content):
+    lines = file_content.split('\n')
+    bens = []
+    codigos_vistos = {}
+    
+    for line in lines:
+        line_clean = line.strip()
+        if not line_clean.startswith('10|'):
+            continue
+            
+        parts = line_clean.split('|')
+        if len(parts) < 16:
+            continue
+            
+        # Posição 15 normalmente representa o Código do Bem no layout do SCI Único
+        raw_cod = str(parts[15]).strip()
+        if not raw_cod:
+            raw_cod = str(len(bens) + 1)
+            
+        raw_cod = raw_cod.replace('-', '').replace('/', '')
+        
+        if raw_cod in codigos_vistos:
+            codigos_vistos[raw_cod] += 1
+            final_cod = f"{raw_cod}-{codigos_vistos[raw_cod]}"
+        else:
+            codigos_vistos[raw_cod] = 0
+            final_cod = raw_cod
+            
+        bem = {
+            "codigo": final_cod,
+            "descricao": parts[1].strip(),
+            "data_aquisicao": parts[7].strip() if len(parts) > 7 else "",
+            "valor_original": format_currency_dominio(parts[10]) if len(parts) > 10 else "0,00",
+            "depreciacao_acumulada": "0,00", # Geralmente não listado na linha 10. Se precisar cruzar com outro arquivo depois, podemos evoluir
+            "conta_origem_desc": parts[14].strip() if len(parts) > 14 and parts[14].strip() else "GERAL",
+            "taxa": "0,00",
+            "duplicado": True if raw_cod != final_cod else False
+        }
+        bens.append(bem)
+        
     return pd.DataFrame(bens)
 
 def parse_planilha_simplificada(df_input):
@@ -791,7 +838,15 @@ def generate_dominio_txt(df, configs, de_para_contas):
 st.sidebar.header("⚙️ Central de Configuração")
 sistema = st.sidebar.selectbox(
     "Selecione o Sistema de Origem", 
-    ["IOB / Folhamatic", "Prosoft (Excel/CSV)", "Contmatic (Excel/CSV)", "Exactus (Excel/CSV)", "Questor (Excel/CSV)", "Planilha Simplificada / Copiar e Colar"]
+    [
+        "IOB / Folhamatic", 
+        "Prosoft (Excel/CSV)", 
+        "Contmatic (Excel/CSV)", 
+        "Exactus (Excel/CSV)", 
+        "Questor (Excel/CSV)", 
+        "SCI / Único (TXT)", 
+        "Planilha Simplificada / Copiar e Colar"
+    ]
 )
 
 st.sidebar.markdown("---")
@@ -887,7 +942,7 @@ elif sistema == "Contmatic (Excel/CSV)":
 
 # --- FLUXO DOS DEMAIS SISTEMAS ---
 else:
-    if sistema == "IOB / Folhamatic":
+    if sistema in ["IOB / Folhamatic", "SCI / Único (TXT)"]:
         file_types = ["txt"]
     else:
         file_types = ["csv", "xlsx", "xls", "txt"]
@@ -907,6 +962,9 @@ else:
                         st.session_state.df_bens = parse_exactus(uploaded_file)
                     elif sistema == "Questor (Excel/CSV)":
                         st.session_state.df_bens = parse_questor_universal(uploaded_file)
+                    elif sistema == "SCI / Único (TXT)":
+                        content = uploaded_file.getvalue().decode("latin-1")
+                        st.session_state.df_bens = parse_sci_unico(content)
                 except Exception as e:
                     st.error(f"Erro inesperado ao ler arquivo: {e}")
                     
