@@ -60,11 +60,11 @@ MANUAIS = {
             "3. Clique com o botão direito sobre os bens > Exportar > Excel"
         ]
     },
-    "SCI / Único (TXT)": {
+    "SCI / Único (Excel/TXT)": {
         "titulo": "Como exportar no SCI / Único",
         "passos": [
             "1. Acesse o sistema SCI Único / Patrimônio.",
-            "2. Exporte o arquivo de cadastro de bens em formato TXT (Layout Padrão).",
+            "2. Exporte o arquivo de cadastro de bens em formato TXT (Layout Padrão) ou gere o Relatório de Cadastro de Bens em Excel.",
             "3. Faça o upload do arquivo gerado abaixo."
         ]
     },
@@ -656,46 +656,119 @@ def parse_questor_universal(uploaded_file):
             
     return pd.DataFrame(bens)
 
-def parse_sci_unico(file_content):
-    lines = file_content.split('\n')
+def parse_sci_unico_universal(uploaded_file):
+    filename = uploaded_file.name.lower()
     bens = []
     codigos_vistos = {}
     
-    for line in lines:
-        line_clean = line.strip()
-        if not line_clean.startswith('10|'):
-            continue
+    if filename.endswith('.xlsx') or filename.endswith('.xls'):
+        try:
+            df_raw = pd.read_excel(uploaded_file, header=None)
+            rows = df_raw.fillna("").astype(str).values.tolist()
             
-        parts = line_clean.split('|')
-        if len(parts) < 16:
-            continue
+            current_bem = {}
+            for row in rows:
+                row_clean = [str(x).strip() for x in row]
+                col0 = row_clean[0].upper()
+                
+                if "DESCRIÇÃO:" in col0 or "DESCRICAO:" in col0:
+                    if current_bem:
+                        bens.append(current_bem)
+                    current_bem = {
+                        "codigo": "", "descricao": "", "data_aquisicao": "",
+                        "valor_original": "0,00", "depreciacao_acumulada": "0,00",
+                        "conta_origem_desc": "GERAL", "taxa": "0,00", "duplicado": False
+                    }
+                    val = row_clean[1] if len(row_clean) > 1 else ""
+                    if " - " in val:
+                        parts = val.split(" - ", 1)
+                        raw_cod = parts[0].strip().replace('-', '').replace('/', '')
+                        current_bem["descricao"] = parts[1].strip()
+                    else:
+                        raw_cod = str(len(bens) + 1)
+                        current_bem["descricao"] = val
+                        
+                    if raw_cod in codigos_vistos:
+                        codigos_vistos[raw_cod] += 1
+                        current_bem["codigo"] = f"{raw_cod}-{codigos_vistos[raw_cod]}"
+                        current_bem["duplicado"] = True
+                    else:
+                        codigos_vistos[raw_cod] = 0
+                        current_bem["codigo"] = raw_cod
+                        
+                if not current_bem: continue
+                    
+                if "DATA AQUISIÇÃO:" in col0 or "DATA AQUISICAO:" in col0:
+                    current_bem["data_aquisicao"] = row_clean[1] if len(row_clean) > 1 else ""
+                    
+                if "CONTA CONTÁBIL:" in col0 or "CONTA CONTABIL:" in col0:
+                    current_bem["conta_origem_desc"] = row_clean[1] if len(row_clean) > 1 and row_clean[1] else "GERAL"
+                    
+                if "VALOR ORIGINAL:" in col0:
+                    val_str = row_clean[1] if len(row_clean) > 1 else "0"
+                    try:
+                        val_float = float(val_str.replace(",", ".")) if "." not in val_str or "," in val_str else float(val_str)
+                        current_bem["valor_original"] = f"{val_float:.2f}".replace('.', ',')
+                    except: pass
+                        
+                for i, cell in enumerate(row_clean):
+                    if "DEPR. ACUMULADA:" in cell.upper() or "DEPR.ACUMULADA:" in cell.upper() or "DEPR. ACUM." in cell.upper():
+                        if len(row_clean) > i + 1 and row_clean[i+1]:
+                            val_str = row_clean[i+1]
+                            try:
+                                val_float = float(val_str.replace(",", ".")) if "." not in val_str or "," in val_str else float(val_str)
+                                current_bem["depreciacao_acumulada"] = f"{val_float:.2f}".replace('.', ',')
+                            except: pass
+                            
+            if current_bem: bens.append(current_bem)
+        except Exception as e:
+            st.error(f"Erro ao ler Excel SCI: {e}")
+    else:
+        try:
+            content = uploaded_file.getvalue().decode("latin-1")
+            lines = content.split('\n')
             
-        # Posição 15 normalmente representa o Código do Bem no layout do SCI Único
-        raw_cod = str(parts[15]).strip()
-        if not raw_cod:
-            raw_cod = str(len(bens) + 1)
+            for line in lines:
+                line_clean = line.strip()
+                if not line_clean.startswith('10|'): continue
+                    
+                parts = line_clean.split('|')
+                if len(parts) < 16: continue
+                    
+                raw_cod = str(parts[15]).strip()
+                if not raw_cod: raw_cod = str(len(bens) + 1)
+                raw_cod = raw_cod.replace('-', '').replace('/', '')
+                
+                if raw_cod in codigos_vistos:
+                    codigos_vistos[raw_cod] += 1
+                    final_cod = f"{raw_cod}-{codigos_vistos[raw_cod]}"
+                    dup = True
+                else:
+                    codigos_vistos[raw_cod] = 0
+                    final_cod = raw_cod
+                    dup = False
+                    
+                def fmt_curr(v):
+                    if not v: return "0,00"
+                    v = v.replace('R$', '').replace(' ', '').strip()
+                    if '.' in v and ',' in v: v = v.replace('.', '')
+                    elif '.' in v: v = v.replace('.', ',')
+                    return v if ',' in v else f"{v},00"
+
+                bem = {
+                    "codigo": final_cod,
+                    "descricao": parts[1].strip(),
+                    "data_aquisicao": parts[7].strip() if len(parts) > 7 else "",
+                    "valor_original": fmt_curr(parts[10]) if len(parts) > 10 else "0,00",
+                    "depreciacao_acumulada": "0,00",
+                    "conta_origem_desc": parts[14].strip() if len(parts) > 14 and parts[14].strip() else "GERAL",
+                    "taxa": "0,00",
+                    "duplicado": dup
+                }
+                bens.append(bem)
+        except Exception as e:
+            st.error(f"Erro ao ler TXT SCI: {e}")
             
-        raw_cod = raw_cod.replace('-', '').replace('/', '')
-        
-        if raw_cod in codigos_vistos:
-            codigos_vistos[raw_cod] += 1
-            final_cod = f"{raw_cod}-{codigos_vistos[raw_cod]}"
-        else:
-            codigos_vistos[raw_cod] = 0
-            final_cod = raw_cod
-            
-        bem = {
-            "codigo": final_cod,
-            "descricao": parts[1].strip(),
-            "data_aquisicao": parts[7].strip() if len(parts) > 7 else "",
-            "valor_original": format_currency_dominio(parts[10]) if len(parts) > 10 else "0,00",
-            "depreciacao_acumulada": "0,00", # Geralmente não listado na linha 10. Se precisar cruzar com outro arquivo depois, podemos evoluir
-            "conta_origem_desc": parts[14].strip() if len(parts) > 14 and parts[14].strip() else "GERAL",
-            "taxa": "0,00",
-            "duplicado": True if raw_cod != final_cod else False
-        }
-        bens.append(bem)
-        
     return pd.DataFrame(bens)
 
 def parse_planilha_simplificada(df_input):
@@ -844,7 +917,7 @@ sistema = st.sidebar.selectbox(
         "Contmatic (Excel/CSV)", 
         "Exactus (Excel/CSV)", 
         "Questor (Excel/CSV)", 
-        "SCI / Único (TXT)", 
+        "SCI / Único (Excel/TXT)", 
         "Planilha Simplificada / Copiar e Colar"
     ]
 )
@@ -942,7 +1015,7 @@ elif sistema == "Contmatic (Excel/CSV)":
 
 # --- FLUXO DOS DEMAIS SISTEMAS ---
 else:
-    if sistema in ["IOB / Folhamatic", "SCI / Único (TXT)"]:
+    if sistema == "IOB / Folhamatic":
         file_types = ["txt"]
     else:
         file_types = ["csv", "xlsx", "xls", "txt"]
@@ -962,9 +1035,8 @@ else:
                         st.session_state.df_bens = parse_exactus(uploaded_file)
                     elif sistema == "Questor (Excel/CSV)":
                         st.session_state.df_bens = parse_questor_universal(uploaded_file)
-                    elif sistema == "SCI / Único (TXT)":
-                        content = uploaded_file.getvalue().decode("latin-1")
-                        st.session_state.df_bens = parse_sci_unico(content)
+                    elif sistema == "SCI / Único (Excel/TXT)":
+                        st.session_state.df_bens = parse_sci_unico_universal(uploaded_file)
                 except Exception as e:
                     st.error(f"Erro inesperado ao ler arquivo: {e}")
                     
